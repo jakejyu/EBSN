@@ -1,0 +1,237 @@
+# Project: Event-user link recommendation - Baseline 1
+# RA project with professor Memo 2014Fall semester
+# Joint work with Jiang Yu, Xiang Liu, and Prof. Memo
+# 2014-12
+# NYU - Poly - CSE
+
+
+import sys
+import json
+import nltk
+import re # regular expression
+import pprint # to implement Vividict - nested dictionaries
+
+"""
+milestones for incremental development:
+ -Extract all the text from the .json file and print it
+ -Extract the event description and print it
+ -Extract the tokens of description and print them
+ -Build the whole entity diction for all events in a group and nested dictionaries for each event. tokens and print it (remove duplicate, length<2 and stopwords)
+ -Compute the cosine similarity between two events
+ -
+ -Build the [year, 'name rank', ... ] list and print it
+ -Fix main() to use the extract_names list
+ -
+ -
+ -
+ -
+ -
+"""
+
+
+class Vividict(dict):
+    """
+    implement nested dictionaries
+    e.g. of usage
+    d = Vividict()
+
+    d['foo']['bar']
+    d['foo']['baz']
+    d['fizz']['buzz']
+    d['primary']['secondary']['tertiary']['quaternary']
+    pprint.pprint(d)
+    
+    Which outputs:
+    {'fizz': {'buzz': {}},
+     'foo': {'bar': {}, 'baz': {}},
+     'primary': {'secondary': {'tertiary': {'quaternary': {}}}}}
+ 
+    please refer to the link
+    http://stackoverflow.com/questions/635483/what-is-the-best-way-to-implement-nested-dictionaries-in-python/19829714#19829714
+    """
+    def __missing__(self, key):
+        value = self[key] = type(self)()
+        return value
+
+
+def entityDic(filename):
+    """ Input: a .json file name and a stopwords file name
+    Return: the entity Dictionary of all descriptions of
+    all events; the entity Dictionary for each event"""
+
+    #  target_dir = prepare_dir(dir)
+    #  try: 
+    #  eventData = json.loads(open(dir+'\\'+ str(eventId) + '.json').read())
+
+    # load event data json file
+    try:
+        jsonData = open(filename)
+        eventData = json.load(jsonData)
+        jsonData.close()
+    except IOError:
+        print ('IO Error reading file:', filename)
+
+    # read stopwords file
+    try:
+        f = open("stopwords.txt")
+        stopwords = f.read()
+        f.close()
+    except IOError:
+        print ('IO Error reading file: stopwords.txt')
+    
+    # build entity dictionaries for all events' description and each one's 
+    dic = {} # the whole dic
+    dicEvent = Vividict() # nested dic for all events
+    countEvent = 0 # count the total number of events in the group
+    for item in eventData:
+        try:
+            description_event = item["description"]
+#            idEvent = item["id"]
+            # use the time of event as the first layer key for dicEvent dictionary
+            timeEvent = item["time"]
+            countEvent += 1
+            # parse description in each event
+            tokens = nltk.word_tokenize(description_event)
+            for token in tokens:
+                # use regular expresssion to choose words starting with a word character
+                match = re.search(r'\w+', token)
+                if match:
+                    # remove stopwords and tokens of length<2, change token to lower case
+                    word = token.lower()
+                    if word not in stopwords and len(word)>2:
+                        if word in dic:
+                            dic[word] += 1
+                        else:
+                            dic[word] = 1
+                        if word in dicEvent[timeEvent]:
+                            dicEvent[timeEvent][word] += 1
+                        else:
+                            dicEvent[timeEvent][word] = 1
+        except:
+            continue
+#            print ('ERROR in parsing description!')
+    return dic, dicEvent, countEvent
+
+
+def similarityCosine(dic1, dic2):
+    """
+    Input: two dictionaries
+    Return: cosine similarity of them
+    similarity: cosine \theta = (L*K)/(|L|*|K|)
+    """
+    
+    count = 0
+    for item in dic1:
+        try:
+            if item in dic2:
+                count += 1
+#                print (item) # for debugging
+        except:
+            print ('Error in computing similarity!')
+    similarity = count/(len(dic1)*len(dic2))**0.5
+#    print (count, len(dic1), len(dic2)) # for debugging
+    return similarity
+
+
+def similarityCosineRevised(dic1, dic2):
+    """
+    Input: two dictionaries
+    Return: revised cosine similarity of them taking the times of appearance of entity words in event desription
+    similarity: cosine \theta = (L*K)/(|L|*|K|)
+    """
+    
+    count = 0
+    for key in dic1:
+        try:
+            if key in dic2:
+                count += min(dic1[key], dic2[key])
+#                print (key) # for debugging
+        except:
+            print ('Error in computing revised similarity!')
+    similarity = count/(sum(dic1.values())*sum(dic2.values()))**0.5
+#    print (count, len(dic1), len(dic2)) # for debugging
+    return similarity
+
+
+def splitEvents(dicEvent):
+    """
+    Input: nested entity dictionary of events
+    Return: two nested dics for known events and unknown events
+    """
+    
+    dicKnown = {}
+    dicUnknown = {}
+    try:
+        for key in dicEvent:
+#            print ('key:', key)# for debugging
+            # regular expression: ^ force to match the begining of the string
+            # use events after 2014 year as unknow events for recommendation
+            match = re.search(r'^14\w+', str(key)) # need to convert key into string!
+            if match:
+                dicUnknown[key] = dicEvent[key]
+            else:
+                dicKnown[key] = dicEvent[key]
+    except:
+            print ('Error in split Events!')
+    return dicKnown, dicUnknown
+
+
+
+def main():
+    """
+    call functions to compute similarity and rank them
+    Output: recommened users for events in a group
+    """
+
+    args = sys.argv[1]
+
+    if not args:
+        print ('usage: groupID')
+        sys.exit(1)
+
+    groupID = sys.argv[1]
+    
+    try:
+        (dic, dicEvent, countEvent) = entityDic('events/'+groupID+'.json')
+    except:
+        print ('Error in entityDic')
+        sys.exit(1)
+        
+#    similarity = similarityCosine(dicEvent[1095202800000], dicEvent[1300131200000])
+#    similarityRe = similarityCosineRevised(dicEvent[1095202800000], dicEvent[1300131200000])
+    (dicKnown, dicUnknown) = splitEvents(dicEvent)
+    similarityRe = {}
+    for keyUnknown in dicUnknown:
+        for keyKnown in dicKnown:
+            similarityRe[(keyUnknown,keyKnown)] = similarityCosineRevised(dicUnknown[keyUnknown], dicKnown[keyKnown])
+#    print (similarityRe)
+    similarityReRanked = {}
+
+    outf = open('output similarity/'+groupID+'.txt', 'w')
+    outf.write('Ranked similarity:\n')
+    # ??? how to sorted by key[1] and key=similarityRe.get, sort twice???
+    for key in sorted(similarityRe, key=similarityRe.get, reverse = True):
+        similarityReRanked[key] = similarityRe[key]
+#        print (similarityReRanked[key])
+        outf.write(str(key))
+        outf.write(str(similarityReRanked[key]) + '\n')
+        if similarityReRanked[key] == 1:# for debugging
+            outf.write(str(sorted(dicEvent[key[0]])) + '\n')# for debugging
+            outf.write(str(sorted(dicEvent[key[1]])) + '\n')# for debugging
+    outf.close()
+#    for key in similarityReRanked:
+#        print (key, similarityReRanked[key])
+
+
+#    print (dic)
+#    print (dicEvent)
+    print ('The total number of events in the group is:', countEvent)
+#    print ('Similarity is:', similarity)
+#    print ('Revised Similarity is:', similarityRe)
+#    print ('Ranked Revised Similarity is:', similarityReRanked)
+    print ('Done!')
+#    print ('Recommend users are:?')
+
+
+if __name__ == '__main__':
+    main()
